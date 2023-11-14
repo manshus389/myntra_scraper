@@ -1,0 +1,66 @@
+import scrapy
+import csv
+import uuid
+from urllib.parse import urlparse, parse_qs
+
+class MyntraListScraper(scrapy.Spider):
+    name = "myntra_list_scraper"
+    start_urls = []
+
+    def parse(self, response):
+        products = response.css("li.product-base")
+        scraped_url = response.url
+        for index, product in enumerate(products, start=1):
+            product_name = product.css("div.product-productMetaInfo h3.product-brand::text").get()
+            product_link = product.css("a::attr(href)").get()
+
+            # Extract category from the URL
+            url_path = urlparse(response.url).path
+            category = url_path.split("/")[-1]
+
+            # Extract page number from the URL query parameters
+            query_params = parse_qs(urlparse(response.url).query)
+            page = query_params.get("p", [None])[0]
+
+            yield {
+                "product_name": product_name,
+                "product_link": response.urljoin(product_link),
+                "category": category,
+                "product_ranking": index,
+                "page": page,
+                "page_url": scraped_url,
+                "uuid": str(uuid.uuid4())
+            }
+
+    def closed(self, reason):
+        filename = "myntra_products_list.csv"
+        fieldnames = ["product_name", "product_link", "category", "product_ranking", "page", "page_url", "uuid"]
+
+        with open(filename, mode="w", newline="") as file:
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(self.exported_items)
+
+    def start_requests(self):
+        self.exported_items = []
+
+        with open("myntra_list_links.txt", mode="r") as file:
+            urls = file.read().splitlines()
+            self.start_urls.extend(urls)
+
+        for url in self.start_urls:
+            yield scrapy.Request(url=url, callback=self.parse_item, meta={
+                "zyte_api_automap": {
+                    "browserHtml": True,
+                    "actions": [
+                        {
+                            "action": "scrollBottom",
+                        },
+                    ],
+                },
+            })
+
+    def parse_item(self, response):
+        for item in self.parse(response):
+            self.exported_items.append(item)
+            yield item
